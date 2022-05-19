@@ -13,6 +13,8 @@ public class TestTileRenderer
     [TestMethod]
     public void TestRendering()
     {
+        // NOTE
+        // the unmodified andorra.bin will not work now (generator has been modified), generate a new one FIRST
         var dataFile = new DataFile("MapData/andorra-10032022.bin");
 
         var pixelBb = new TileRenderer.BoundingBox
