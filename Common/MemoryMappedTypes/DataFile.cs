@@ -24,7 +24,7 @@ public readonly ref struct MapFeatureData
     public GeometryType Type { get; init; }
     public ReadOnlySpan<char> Label { get; init; }
     public ReadOnlySpan<Coordinate> Coordinates { get; init; }
-    public Dictionary<string, string> Properties { get; init; }
+    public Dictionary<FeatureProp, Tuple<string, FeatureSubProp>> Properties { get; init; }
 }
 
 /// <summary>
@@ -120,7 +120,8 @@ public unsafe class DataFile : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
     private ReadOnlySpan<Coordinate> GetCoordinates(ulong coordinateOffset, int ithCoordinate, int coordinateCount)
     {
-        return new ReadOnlySpan<Coordinate>(_ptr + coordinateOffset + ithCoordinate * CoordinateSizeInBytes, coordinateCount);
+        return new ReadOnlySpan<Coordinate>(_ptr + coordinateOffset + ithCoordinate * CoordinateSizeInBytes,
+            coordinateCount);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
@@ -131,11 +132,13 @@ public unsafe class DataFile : IDisposable
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private void GetProperty(ulong stringsOffset, ulong charsOffset, int i, out ReadOnlySpan<char> key, out ReadOnlySpan<char> value)
+    private void GetProperty(ulong stringsOffset, ulong charsOffset, int i, out ReadOnlySpan<char> key,
+        out ReadOnlySpan<char> value)
     {
         if (i % 2 != 0)
         {
-            throw new ArgumentException("Properties are key-value pairs and start at even indices in the string list (i.e. i % 2 == 0)");
+            throw new ArgumentException(
+                "Properties are key-value pairs and start at even indices in the string list (i.e. i % 2 == 0)");
         }
 
         GetString(stringsOffset, charsOffset, i, out key);
@@ -158,10 +161,12 @@ public unsafe class DataFile : IDisposable
             {
                 continue;
             }
+
             for (var j = 0; j < header.Tile.Value.FeaturesCount; ++j)
             {
                 var feature = GetFeature(j, header.TileOffset);
-                var coordinates = GetCoordinates(header.Tile.Value.CoordinatesOffsetInBytes, feature->CoordinateOffset, feature->CoordinateCount);
+                var coordinates = GetCoordinates(header.Tile.Value.CoordinatesOffsetInBytes, feature->CoordinateOffset,
+                    feature->CoordinateCount);
                 var isFeatureInBBox = false;
 
                 for (var k = 0; k < coordinates.Length; ++k)
@@ -176,18 +181,29 @@ public unsafe class DataFile : IDisposable
                 var label = ReadOnlySpan<char>.Empty;
                 if (feature->LabelOffset >= 0)
                 {
-                    GetString(header.Tile.Value.StringsOffsetInBytes, header.Tile.Value.CharactersOffsetInBytes, feature->LabelOffset, out label);
+                    GetString(header.Tile.Value.StringsOffsetInBytes, header.Tile.Value.CharactersOffsetInBytes,
+                        feature->LabelOffset, out label);
                 }
 
                 if (isFeatureInBBox)
                 {
-                    var properties = new Dictionary<string, string>(feature->PropertyCount);
+                    var properties = new Dictionary<FeatureProp, Tuple<string, FeatureSubProp>>(feature->PropertyCount);
                     for (var p = 0; p < feature->PropertyCount; ++p)
                     {
-                        GetProperty(header.Tile.Value.StringsOffsetInBytes, header.Tile.Value.CharactersOffsetInBytes, p * 2 + feature->PropertiesOffset, out var key, out var value);
-                        properties.Add(key.ToString(), value.ToString());
-                        Console.WriteLine(key.ToString() + "----------" + value.ToString());
-                        // PE AICI IES STRING URILE PT RANDARE
+                        GetProperty(header.Tile.Value.StringsOffsetInBytes, header.Tile.Value.CharactersOffsetInBytes,
+                            p * 2 + feature->PropertiesOffset, out var key, out var value);
+
+                        // NO MORE STRING COMPARISONS, although it's still strings that we write ;(
+                        if ((FeatureProp)(short)key.ToString()[0] != FeatureProp.Unknown)
+                        {
+                            FeatureProp kk = (FeatureProp)(short)key.ToString()[0];
+                            FeatureSubProp vv = (FeatureSubProp)(short)value.ToString()[0];
+                            if (vv == FeatureSubProp.Unknown)
+                                properties.Add(kk,
+                                    new Tuple<string, FeatureSubProp>(value.ToString(), FeatureSubProp.Unknown)); // only for custom strings
+                            else
+                                properties.Add(kk, new Tuple<string, FeatureSubProp>("", vv)); // only for existent subfeatures
+                        }
                     }
 
                     if (!action(new MapFeatureData

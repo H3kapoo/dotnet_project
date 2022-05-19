@@ -22,22 +22,22 @@ public static class Program
             switch (blob.Type)
             {
                 case BlobType.Primitive:
-                    {
-                        var primitiveBlock = blob.ToPrimitiveBlock();
-                        foreach (var primitiveGroup in primitiveBlock)
-                            switch (primitiveGroup.ContainedType)
-                            {
-                                case PrimitiveGroup.ElementType.Node:
-                                    foreach (var node in primitiveGroup) nodes[node.Id] = (AbstractNode)node;
-                                    break;
+                {
+                    var primitiveBlock = blob.ToPrimitiveBlock();
+                    foreach (var primitiveGroup in primitiveBlock)
+                        switch (primitiveGroup.ContainedType)
+                        {
+                            case PrimitiveGroup.ElementType.Node:
+                                foreach (var node in primitiveGroup) nodes[node.Id] = (AbstractNode)node;
+                                break;
 
-                                case PrimitiveGroup.ElementType.Way:
-                                    foreach (var way in primitiveGroup) ways.Add((Way)way);
-                                    break;
-                            }
+                            case PrimitiveGroup.ElementType.Way:
+                                foreach (var way in primitiveGroup) ways.Add((Way)way);
+                                break;
+                        }
 
-                        break;
-                    }
+                    break;
+                }
             }
         });
 
@@ -124,6 +124,7 @@ public static class Program
                     {
                         labels[^1] = totalPropertyCount * 2 + featureData.PropertyKeys.keys.Count * 2 + 1;
                     }
+
                     featureData.PropertyKeys.keys.Add(tag.Key);
                     featureData.PropertyValues.values.Add(tag.Value);
                 }
@@ -151,6 +152,7 @@ public static class Program
                 {
                     geometryType = GeometryType.Polygon;
                 }
+
                 featureData.GeometryType = (byte)geometryType;
 
                 totalPropertyCount += featureData.PropertyKeys.keys.Count;
@@ -276,16 +278,26 @@ public static class Program
                 var featureData = featuresData[t];
                 for (var i = 0; i < featureData.PropertyKeys.keys.Count; ++i)
                 {
-                    ReadOnlySpan<char> k = featureData.PropertyKeys.keys[i];
-                    ReadOnlySpan<char> v = featureData.PropertyValues.values[i];
-
+                    // Add to offset just 1 for the keys
+                    string v = featureData.PropertyValues.values[i];
                     fileWriter.Write(stringOffset); // StringEntry: Offset
-                    fileWriter.Write(k.Length); // StringEntry: Length
-                    stringOffset += k.Length;
+                    fileWriter.Write(1); //k.Length); // StringEntry: Length
+                    stringOffset += 1; //k.Length;
 
-                    fileWriter.Write(stringOffset); // StringEntry: Offset
-                    fileWriter.Write(v.Length); // StringEntry: Length
-                    stringOffset += v.Length;
+                    // If subprop exists in enum (key) , add just 1 to offset otheriwse add the whole string
+                    // as normal
+                    if (SubPropToEnumCode(v) != FeatureSubProp.Unknown)
+                    {
+                        fileWriter.Write(stringOffset); // StringEntry: Offset
+                        fileWriter.Write(1); // StringEntry: Length
+                        stringOffset += 1;
+                    }
+                    else
+                    {
+                        fileWriter.Write(stringOffset); // StringEntry: Offset
+                        fileWriter.Write(v.Length); // StringEntry: Length
+                        stringOffset += v.Length;
+                    }
                 }
             }
 
@@ -297,24 +309,30 @@ public static class Program
             fileWriter.Write(currentPosition); // TileBlockHeader: CharactersOffsetInBytes
             // And seek forward to continue updating the file
             fileWriter.Seek((int)currentPosition, SeekOrigin.Begin);
+
             foreach (var t in featureIds)
             {
                 var featureData = featuresData[t];
                 for (var i = 0; i < featureData.PropertyKeys.keys.Count; ++i)
                 {
-                    // AICI LE SCRIE BYTE BY BYTE IN MEMORIE
-                    // AR TREBUI UN ENUM BAGAT CUMVA AICI, si salvat ala in loc de a salva
-                    // char by char fiecare chestie
-                    ReadOnlySpan<char> k = featureData.PropertyKeys.keys[i];
-                    foreach (var c in k)
-                    {
-                        fileWriter.Write((short)c);
-                    }
+                    // each 'property' (key) will be just one short in memory, reducing space occupied
+                    string k = featureData.PropertyKeys.keys[i];
+                    fileWriter.Write((short)PropToEnumCode(k));
 
-                    ReadOnlySpan<char> v = featureData.PropertyValues.values[i];
-                    foreach (var c in v)
+                    // each 'sub-property' (value) will also be just a short in memory if the predefined
+                    // enum is found. Otherwise it means it has to be some string like a name of a city, in that
+                    // case we shall write the whole string. Still, memory will be saved
+                    string v = featureData.PropertyValues.values[i];
+                    if (SubPropToEnumCode(v) != FeatureSubProp.Unknown)
                     {
-                        fileWriter.Write((short)c);
+                        fileWriter.Write((short)SubPropToEnumCode(v));
+                    }
+                    else
+                    {
+                        foreach (var c in v)
+                        {
+                            fileWriter.Write((short)c);
+                        }
                     }
                 }
             }
@@ -329,6 +347,146 @@ public static class Program
         }
 
         fileWriter.Flush();
+    }
+    
+    // basically the 'key' of the property
+    private static FeatureProp PropToEnumCode(string propName)
+    {
+        switch (propName)
+        {
+            case "admin_level":
+                return FeatureProp.AdminLevel;
+            case "place":
+                return FeatureProp.Place;
+            case "name":
+                return FeatureProp.Name;
+            case "highway":
+                return FeatureProp.Highway;
+            case "water":
+                return FeatureProp.Water;
+            case "railway":
+                return FeatureProp.Railway;
+            case "natural":
+                return FeatureProp.Natural;
+            case "boundary":
+                return FeatureProp.Boundary;
+            case "landuse":
+                return FeatureProp.Landuse;
+            case "building":
+                return FeatureProp.Building;
+            case "amenity":
+                return FeatureProp.Amenity;
+            case "leisure":
+                return FeatureProp.Leisure;
+        }
+
+        return FeatureProp.Unknown;
+    }
+
+    // basically the 'value' of the property
+    private static FeatureSubProp SubPropToEnumCode(string subPropName)
+    {
+        switch (subPropName)
+        {
+            case "motorway":
+                return FeatureSubProp.Motorway;
+            case "trunk":
+                return FeatureSubProp.Trunk;
+            case "primary":
+                return FeatureSubProp.Primary;
+            case "secondary":
+                return FeatureSubProp.Secondary;
+            case "tertiary":
+                return FeatureSubProp.Tertiary;
+            case "unclassified":
+                return FeatureSubProp.Unclassified;
+            case "road":
+                return FeatureSubProp.Road;
+            case "natural":
+                return FeatureSubProp.Natural;
+            case "fell":
+                return FeatureSubProp.Fell;
+            case "grassland":
+                return FeatureSubProp.Grassland;
+            case "heath":
+                return FeatureSubProp.Heath;
+            case "moor":
+                return FeatureSubProp.Moor;
+            case "scrub":
+                return FeatureSubProp.Scrub;
+            case "wetland":
+                return FeatureSubProp.Wetland;
+            case "wood":
+                return FeatureSubProp.Wood;
+            case "tree_row":
+                return FeatureSubProp.TreeRow;
+            case "bare_rock":
+                return FeatureSubProp.BareRock;
+            case "rock":
+                return FeatureSubProp.Rock;
+            case "scree":
+                return FeatureSubProp.Scree;
+            case "beach":
+                return FeatureSubProp.Beach;
+            case "sand":
+                return FeatureSubProp.Sand;
+            case "water":
+                return FeatureSubProp.Water;
+            case "2":
+                return FeatureSubProp.Two;
+            case "city":
+                return FeatureSubProp.City;
+            case "town":
+                return FeatureSubProp.Town;
+            case "locality":
+                return FeatureSubProp.Locality;
+            case "hamlet":
+                return FeatureSubProp.Hamlet;
+            case "administrative":
+                return FeatureSubProp.Administrative;
+            case "forest":
+                return FeatureSubProp.Forest;
+            case "orchard":
+                return FeatureSubProp.Orchard;
+            case "residential":
+                return FeatureSubProp.Residential;
+            case "cemetery":
+                return FeatureSubProp.Cemetery;
+            case "industrial":
+                return FeatureSubProp.Industrial;
+            case "commercial":
+                return FeatureSubProp.Commercial;
+            case "square":
+                return FeatureSubProp.Square;
+            case "construction":
+                return FeatureSubProp.Construction;
+            case "military":
+                return FeatureSubProp.Military;
+            case "quarry":
+                return FeatureSubProp.Quarry;
+            case "brownfield":
+                return FeatureSubProp.Brownfield;
+            case "farm":
+                return FeatureSubProp.Farm;
+            case "meadow":
+                return FeatureSubProp.Meadow;
+            case "grass":
+                return FeatureSubProp.Grass;
+            case "greenfield":
+                return FeatureSubProp.Greenfield;
+            case "recreation_ground":
+                return FeatureSubProp.RecreationGround;
+            case "winter_sports":
+                return FeatureSubProp.WinterSports;
+            case "allotments":
+                return FeatureSubProp.Allotments;
+            case "reservoir":
+                return FeatureSubProp.Reservoir;
+            case "basin":
+                return FeatureSubProp.Basin;
+        }
+
+        return FeatureSubProp.Unknown;
     }
 
     public static void Main(string[] args)
